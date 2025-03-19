@@ -1,0 +1,40 @@
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+{% if physical_int == "<primary_int>" %}
+# PRIMARY INTERFACE BELOW IS INCORRECT, NETBOX PUPPETDB IMPORT HAS NOT YET BEEN DONE
+# NEEDS TO BE CHANGED TO THE CORRECT LINUX NETDEV NAME
+{% endif %}
+source /etc/network/interfaces.d/*
+
+# The loopback network interface
+auto lo{% for bridge in bridge_names %} {{ bridge }}{% endfor %}
+iface lo inet loopback
+
+# The primary network interface
+allow-hotplug {{ physical_int }}
+iface private inet static
+    address {{ primary_ip4 }}
+    gateway {{ v4_gateway }}
+    # dns-* options are implemented by the resolvconf package, if installed
+    dns-nameservers 10.3.0.1
+    dns-search {{ dns_search }}
+    bridge_ports    {{ physical_int }}
+    bridge_stp      off
+    bridge_maxwait  0
+    bridge_fd       0
+
+    up ip token set {{ ip6_token }} dev private
+    up ip addr add {{ primary_ip6 }} dev private
+
+{% for vlan in tagged_vlans %}
+{% set bridge_name = vlan.name.split('-')[0].rstrip('1') %}
+iface {{ bridge_name }} inet manual
+    pre-up ip link add name {{ vlan.vid }} link {{ physical_int }} type vlan id {{ vlan.vid }}
+    post-down ip link delete dev {{ vlan.vid }} type vlan
+    bridge_ports   {{ vlan.vid }}
+    bridge_stp     off
+    bridge_maxwait 0
+    bridge_fd      0
+    up sysctl net.ipv6.conf.{{ bridge_name }}.accept_ra=0
+{% endfor %}
