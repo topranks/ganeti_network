@@ -26,9 +26,8 @@ def main():
     global nb
     nb = pynetbox.api(nb_url, token=nb_key)
 
-    nb_changes = False
     host = nb.dcim.devices.get(name=args.host)
-    physical_int, switch, switch_int = get_switch_int(host)
+    nb_changes, physical_int, switch, switch_int = get_switch_int(host)
 
     # Get the private vlan host has been provisioned for
     private_vlan = nb.ipam.vlans.get(name=switch_int.untagged_vlan.name)
@@ -90,9 +89,9 @@ def main():
 
 def get_switch_int(nb_host):
     """ Returns switch and interface object for a given server primary link """
-    print(f"Running Netbox import script to get latest interface names from PuppetDB...", end='')
-    nb_puppetdb_import(nb_host)
-    print(" done.")
+    print(f"Running Netbox import script to get latest interface names from PuppetDB...")
+    switch_changed = nb_puppetdb_import(nb_host)
+    print("PuppetDB import completed.")
     physical_int = get_host_physical(nb_host)
     if not str(physical_int).startswith('e'):
         print(f"ERROR: Host interface name is not valid after PupetDB Netbox import, got {physical_int}.")
@@ -101,7 +100,7 @@ def get_switch_int(nb_host):
 
     switch = nb.dcim.devices.get(name=physical_int.connected_endpoints[0].device.name)
     switch_int = nb.dcim.interfaces.get(device_id=switch.id, name=physical_int.connected_endpoints[0].name)
-    return physical_int, switch, switch_int
+    return switch_changed, physical_int, switch, switch_int
 
 
 def get_host_physical(nb_host):
@@ -138,6 +137,12 @@ def nb_puppetdb_import(nb_host):
         completed = status.json()['result']['completed']
         tries += 1
 
+    from pprintpp import pprint as pp
+    for script_action in status.json()['result']['data']['log']:
+        if script_action['message'].startswith("Set asw"):
+            print(f"PuppetDB import script made changes: {script_action['message']}")
+            return True
+    return False
 
 if __name__=="__main__":
     main()
