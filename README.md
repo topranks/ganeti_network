@@ -72,7 +72,4 @@ iface sandbox inet manual
 
 
 *******************************************************************************
-
-
-NOTE: Netbox vlan settings were updated, please run sre.network.configure-switch-interfaces cookbook.
 ```

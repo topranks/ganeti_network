@@ -139,7 +139,7 @@ def nb_puppetdb_import(nb_host):
 
     from pprintpp import pprint as pp
     for script_action in status.json()['result']['data']['log']:
-        if script_action['message'].startswith("Set asw"):
+        if script_action['message'].startswith(("Set asw", "Set lsw")):
             print(f"PuppetDB import script made changes: {script_action['message']}")
             return True
     return False
