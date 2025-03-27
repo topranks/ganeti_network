@@ -27,7 +27,18 @@ def main():
     nb = pynetbox.api(nb_url, token=nb_key)
 
     host = nb.dcim.devices.get(name=args.host)
-    nb_changes, physical_int, switch, switch_int = get_switch_int(host)
+
+    # Get the related info and store the list of tagged vlans before
+    physical_int, switch, switch_int = get_switch_int(host)
+    switchport_tagged_vlans_before = set([vlan.id for vlan in switch_int.tagged_vlans])
+
+    print(f"Running Netbox import script to get latest interface names from PuppetDB... ", end='', flush=True)
+    nb_puppetdb_import(host)
+    print("done.")
+
+    # Get the related interfaces and switch device again in case puppetdb changed things
+    physical_int, switch, switch_int = get_switch_int(host)
+    print(f"Host primary physical interface name in Netbox is {physical_int}")
 
     # Get the private vlan host has been provisioned for
     private_vlan = nb.ipam.vlans.get(name=switch_int.untagged_vlan.name)
@@ -36,7 +47,7 @@ def main():
         print(f"{host} is configured on rack-specific vlan {private_vlan} instead of row-wide... needs to be fixed manually.")
         sys.exit(1)
 
-    # Find additional vlans the host needs to connect to
+    # Find additional vlans in this location we should trunk to ganeti nodes
     tagged_vlans = []
     for vlan_type in ('public1', 'analytics1', 'sandbox1'):
         additional_vlan_name = f"{vlan_type}-{private_vlan_location}-{host.site.slug}"
@@ -51,13 +62,11 @@ def main():
     if switch_int.mode.value != "tagged":
         switch_int.mode = 'tagged'
         switch_int.save()
-        nb_changes = True
         print(f"Netbox: {switch} interface {switch_int} changed mode to tagged.")
     tagged_vlan_ids = set([vlan.id for vlan in tagged_vlans])
     if tagged_vlan_ids != set([vlan.id for vlan in switch_int.tagged_vlans]):
         switch_int.tagged_vlans = list(tagged_vlan_ids)
         switch_int.save()
-        nb_changes = True
         print(f"Netbox: {switch} interface {switch_int} tagged vlans set to {tagged_vlans}")
 
     # Generate /etc/network/interfaces config from Jinja template
@@ -83,24 +92,22 @@ def main():
         print("\n*******************************************************")
     else:
         print(f'The /etc/network/interfaces config has been written to {filename}')
-    if nb_changes:
+
+    # We get the switch int again as we've already consumed the tagged_vlans generator
+    physical_int, switch, switch_int = get_switch_int(host)
+    if set([vlan.id for vlan in switch_int.tagged_vlans]) != switchport_tagged_vlans_before:
         print("NOTE: Netbox vlan settings were updated, please run sre.network.configure-switch-interfaces cookbook.")
 
 
 def get_switch_int(nb_host):
     """ Returns switch and interface object for a given server primary link """
-    print(f"Running Netbox import script to get latest interface names from PuppetDB...")
-    switch_changed = nb_puppetdb_import(nb_host)
-    print("PuppetDB import completed.")
     physical_int = get_host_physical(nb_host)
     if not str(physical_int).startswith('e'):
-        print(f"ERROR: Host interface name is not valid after PupetDB Netbox import, got {physical_int}.")
-    else:
-        print(f"Host primary physical interface according to PuppetDB is {physical_int}")
+        print(f"ERROR: Host interface name in Netbox is invalid , got {physical_int}.")
 
     switch = nb.dcim.devices.get(name=physical_int.connected_endpoints[0].device.name)
     switch_int = nb.dcim.interfaces.get(device_id=switch.id, name=physical_int.connected_endpoints[0].name)
-    return switch_changed, physical_int, switch, switch_int
+    return physical_int, switch, switch_int
 
 
 def get_host_physical(nb_host):
@@ -137,11 +144,9 @@ def nb_puppetdb_import(nb_host):
         completed = status.json()['result']['completed']
         tries += 1
 
-    for script_action in status.json()['result']['data']['log']:
-        if script_action['message'].startswith(("Set asw", "Set lsw")):
-            print(f"PuppetDB import script made changes: {script_action['message']}")
-            return True
-    return False
+#    for script_action in status.json()['result']['data']['log']:
+#        if script_action['message'].startswith(("Set asw", "Set lsw")):
+#            print(f"PuppetDB import script made changes: {script_action['message']}")
 
 if __name__=="__main__":
     main()
